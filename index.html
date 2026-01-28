@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Container Planner - Light Mode</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            --primary: #2563eb;
+        }
+        body { background-color: #f8fafc; color: #1e293b; font-family: 'Inter', sans-serif; }
+        
+        .heatmap-cell {
+            transition: all 0.2s;
+            min-width: 60px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.7rem;
+            border-radius: 4px;
+        }
+
+        .calendar-day {
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: all 0.2s;
+            font-size: 0.7rem;
+            user-select: none;
+        }
+        .calendar-day.in-range {
+            background-color: #dbeafe !important;
+            color: #1e40af !important;
+            border-radius: 0;
+        }
+        .calendar-day.range-edge {
+            background-color: var(--primary) !important;
+            color: white !important;
+            font-weight: bold;
+            border-radius: 6px;
+        }
+        .calendar-day.has-data {
+            border: 1px solid #e2e8f0;
+            color: #475569;
+        }
+        .calendar-day.disabled { color: #cbd5e1; cursor: not-allowed; }
+
+        #calendarPanel {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+        #calendarPanel.show {
+            max-height: 400px;
+        }
+        
+        .sticky-col {
+            position: sticky;
+            left: 0;
+            background-color: #ffffff;
+            z-index: 10;
+            border-right: 2px solid #f1f5f9;
+        }
+        .grid-container::-webkit-scrollbar { height: 8px; }
+        .grid-container::-webkit-scrollbar-track { background: #f1f5f9; }
+        .grid-container::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+
+        input[type=range] {
+            height: 6px;
+            -webkit-appearance: none;
+            background: #e2e8f0;
+            border-radius: 3px;
+            outline: none;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #2563eb;
+            cursor: pointer;
+            border: 2px solid white;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+
+        /* Loading Spinner */
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3498db;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="fixed inset-0 bg-slate-900/50 z-[100] hidden flex flex-col items-center justify-center text-white">
+        <div class="bg-white p-6 rounded-2xl flex flex-col items-center shadow-2xl">
+            <div class="loader mb-4"></div>
+            <p class="text-slate-900 font-bold text-sm">Memproses Data...</p>
+        </div>
+    </div>
+
+    <div class="max-w-7xl mx-auto px-4 py-6">
+        <!-- Minimal Header -->
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+            <div>
+                <h1 class="text-xl font-bold text-slate-900 flex items-center gap-2">
+                    <i data-lucide="box" class="text-blue-600"></i>
+                    Container Planner
+                </h1>
+                <p class="text-slate-500 text-xs">Penyaring Blok: 8, QS, CG, E disembunyikan</p>
+            </div>
+            
+            <div class="flex items-center gap-3">
+                <div id="importNote" class="hidden animate-bounce bg-amber-50 text-amber-700 px-3 py-1.5 rounded-lg border border-amber-200 text-[10px] font-bold">
+                    ✨ Berhasil! Silakan pilih tanggal di kalender
+                </div>
+                <label class="cursor-pointer bg-white hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg border border-slate-200 flex items-center gap-2 transition-all shadow-sm text-xs font-semibold">
+                    <i data-lucide="upload-cloud" size="16"></i>
+                    Import Excel
+                    <input type="file" id="excelInput" class="hidden" accept=".xlsx, .xls">
+                </label>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
+            <!-- Direction & Stats -->
+            <div class="lg:col-span-3">
+                <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm h-full flex flex-col justify-between">
+                    <div class="flex bg-slate-100 p-1 rounded-lg mb-4">
+                        <button onclick="setFilter('direction', 'ALL')" id="btn-ALL" class="dir-btn flex-1 py-1.5 rounded-md text-[10px] font-bold transition-all bg-white shadow-sm text-blue-600">ALL</button>
+                        <button onclick="setFilter('direction', 'IMPORT')" id="btn-IMPORT" class="dir-btn flex-1 py-1.5 rounded-md text-[10px] font-bold transition-all text-slate-500 hover:text-slate-700">IMPORT</button>
+                        <button onclick="setFilter('direction', 'EXPORT')" id="btn-EXPORT" class="dir-btn flex-1 py-1.5 rounded-md text-[10px] font-bold transition-all text-slate-500 hover:text-slate-700">EXPORT</button>
+                    </div>
+                    <div class="flex items-end justify-between">
+                        <div>
+                            <span id="stat-total" class="text-3xl font-bold text-slate-900 leading-none">0</span>
+                            <span class="text-[10px] text-slate-400 block font-bold uppercase tracking-widest mt-1">Total Unit</span>
+                        </div>
+                        <i data-lucide="container" class="text-slate-100" size="48"></i>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Compact Range Calendar -->
+            <div class="lg:col-span-4">
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden h-full flex flex-col">
+                    <button onclick="toggleCalendar()" class="w-full flex items-center justify-between px-4 py-4 hover:bg-slate-50 transition-colors flex-1">
+                        <div class="flex items-center gap-3 text-left">
+                            <i data-lucide="calendar" class="text-blue-500" size="20"></i>
+                            <div>
+                                <p id="rangeDisplay" class="text-sm font-bold text-slate-800">Pilih Tanggal</p>
+                                <p class="text-[10px] text-slate-400 font-medium">Klik tanggal awal & akhir</p>
+                            </div>
+                        </div>
+                        <i data-lucide="chevron-down" id="calChevron" size="18" class="text-slate-400 transition-transform"></i>
+                    </button>
+
+                    <div id="calendarPanel" class="px-4 border-t border-slate-50 bg-white absolute z-50 w-full max-w-[340px] shadow-2xl rounded-b-xl mt-16 md:mt-20">
+                        <div class="flex items-center justify-between py-3">
+                            <h3 id="currentMonthYear" class="text-xs font-bold text-slate-700 uppercase">Jan 2026</h3>
+                            <div class="flex gap-1">
+                                <button onclick="changeMonth(-1)" class="p-1.5 hover:bg-slate-100 rounded-lg"><i data-lucide="chevron-left" size="14"></i></button>
+                                <button onclick="changeMonth(1)" class="p-1.5 hover:bg-slate-100 rounded-lg"><i data-lucide="chevron-right" size="14"></i></button>
+                            </div>
+                        </div>
+                        <div class="max-w-[280px] mx-auto pb-4">
+                            <div class="grid grid-cols-7 gap-1 mb-2">
+                                <div class="text-center text-[9px] font-bold text-slate-300">S</div>
+                                <div class="text-center text-[9px] font-bold text-slate-300">M</div>
+                                <div class="text-center text-[9px] font-bold text-slate-300">T</div>
+                                <div class="text-center text-[9px] font-bold text-slate-300">W</div>
+                                <div class="text-center text-[9px] font-bold text-slate-300">T</div>
+                                <div class="text-center text-[9px] font-bold text-slate-300">F</div>
+                                <div class="text-center text-[9px] font-bold text-slate-300">S</div>
+                            </div>
+                            <div id="calendarGrid" class="grid grid-cols-7 gap-1"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Adjust Color Range -->
+            <div class="lg:col-span-5">
+                <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm h-full">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex flex-col">
+                            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Level Analisis</span>
+                            <span class="text-xs font-bold text-slate-700">Threshold Batas Unit</span>
+                        </div>
+                        <div class="flex bg-slate-100 p-1 rounded-lg">
+                            <button onclick="setRangeCount(3)" id="btn-range-3" class="px-3 py-1 text-[10px] font-bold rounded-md bg-white shadow-sm text-blue-600 transition-all">3 Warna</button>
+                            <button onclick="setRangeCount(5)" id="btn-range-5" class="px-3 py-1 text-[10px] font-bold rounded-md text-slate-500 transition-all">5 Warna</button>
+                        </div>
+                    </div>
+                    
+                    <div id="thresholdSliders" class="space-y-4">
+                        <!-- Sliders generated by JS -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Heatmap Display -->
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="px-4 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                <h2 class="font-bold text-sm text-slate-700 flex items-center gap-2">
+                    <i data-lucide="layout-grid" size="18" class="text-blue-500"></i>
+                    Matriks Distribusi Kontainer
+                </h2>
+                <div id="legend" class="flex items-center gap-4 text-[10px] font-bold text-slate-400"></div>
+            </div>
+
+            <div class="grid-container overflow-x-auto">
+                <table class="w-full border-separate border-spacing-0">
+                    <thead id="gridHeader"></thead>
+                    <tbody id="gridBody"></tbody>
+                </table>
+                <div id="emptyState" class="flex flex-col items-center justify-center py-32 text-slate-300">
+                    <i data-lucide="mouse-pointer-2" size="48" class="mb-4 opacity-20"></i>
+                    <p class="text-sm font-semibold">Silakan pilih rentang tanggal pada kalender di atas</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let rawData = [];
+        let rangeStart = null;
+        let rangeEnd = null;
+        let selectedDates = [];
+        let currentDirection = 'ALL';
+        let viewDate = new Date(2025, 7, 1);
+        
+        // Heatmap config
+        let colorLevelCount = 3;
+        // Thresholds menyimpan batas AKHIR setiap level.
+        // Misalnya [10, 25] berarti:
+        // Low: 1 - 10
+        // Med: 11 - 25
+        // High: > 25
+        let thresholds = {
+            3: [10, 25], 
+            5: [5, 15, 30, 50] 
+        };
+
+        const dummyData = [
+            { DIRECTION: 'IMPORT', GATE_IN: '2025-08-18 21:59:07', LOCATION: 'RC9-11-03-1' },
+            { DIRECTION: 'IMPORT', GATE_IN: '2025-08-18 23:11:09', LOCATION: 'RC9-07-06-1' },
+            { DIRECTION: 'IMPORT', GATE_IN: '2025-08-20 10:48:48', LOCATION: 'BR9-10-01-1' },
+            { DIRECTION: 'EXPORT', GATE_IN: '2025-08-22 15:51:50', LOCATION: 'B07-17-05-2' },
+            { DIRECTION: 'IMPORT', GATE_IN: '2025-08-25 10:46:57', LOCATION: 'A08-33-03-4' }
+        ];
+
+        window.onload = () => {
+            lucide.createIcons();
+            renderThresholdSliders();
+            processData(dummyData);
+        };
+
+        function toggleCalendar() {
+            const panel = document.getElementById('calendarPanel');
+            const chevron = document.getElementById('calChevron');
+            panel.classList.toggle('show');
+            chevron.style.transform = panel.classList.contains('show') ? 'rotate(180deg)' : 'rotate(0deg)';
+        }
+
+        // --- THRESHOLD LOGIC (BERANTAI) ---
+        function renderThresholdSliders() {
+            const container = document.getElementById('thresholdSliders');
+            container.innerHTML = '';
+            const currentThresholds = thresholds[colorLevelCount];
+            
+            const config = colorLevelCount === 3 
+                ? [ { name: 'Low' }, { name: 'Medium' } ]
+                : [ { name: 'V.Low' }, { name: 'Low' }, { name: 'Medium' }, { name: 'High' } ];
+            
+            config.forEach((item, idx) => {
+                const prevVal = idx === 0 ? 0 : currentThresholds[idx - 1];
+                const currentVal = currentThresholds[idx];
+                
+                // Jika nilai sekarang lebih kecil dari sebelumnya karena geser manual, 
+                // kita paksa minimal setara sebelumnya + 1
+                if (currentVal <= prevVal) {
+                    thresholds[colorLevelCount][idx] = prevVal + 1;
+                }
+
+                const div = document.createElement('div');
+                div.className = "flex flex-col gap-1 bg-slate-50 p-2 rounded-lg border border-slate-100";
+                div.innerHTML = `
+                    <div class="flex justify-between items-center px-1">
+                        <div class="flex flex-col">
+                            <span class="text-[10px] font-extrabold text-slate-700 uppercase">${item.name}</span>
+                            <span class="text-[9px] text-slate-400 font-bold">Rentang: ${prevVal + 1} s/d ${thresholds[colorLevelCount][idx]} unit</span>
+                        </div>
+                        <span class="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded ring-1 ring-blue-100">${thresholds[colorLevelCount][idx]} Max</span>
+                    </div>
+                    <input type="range" min="${prevVal + 1}" max="${prevVal + 100}" value="${thresholds[colorLevelCount][idx]}" 
+                        class="w-full mt-1" oninput="updateThreshold(${idx}, this.value)">
+                `;
+                container.appendChild(div);
+            });
+
+            // Tambahkan info untuk kategori tertinggi (Auto)
+            const lastMax = currentThresholds[currentThresholds.length - 1];
+            const infoDiv = document.createElement('div');
+            infoDiv.className = "text-[9px] font-bold text-slate-400 text-center uppercase tracking-widest pt-1";
+            infoDiv.innerHTML = `Kategori ${colorLevelCount === 3 ? 'High' : 'V.High'} otomatis mulai dari > ${lastMax} unit`;
+            container.appendChild(infoDiv);
+        }
+
+        function updateThreshold(idx, val) {
+            const newVal = parseInt(val);
+            thresholds[colorLevelCount][idx] = newVal;
+            
+            // Pastikan slider setelahnya juga ikut tergeser jika nilainya jadi lebih kecil
+            for (let i = idx + 1; i < thresholds[colorLevelCount].length; i++) {
+                if (thresholds[colorLevelCount][i] <= thresholds[colorLevelCount][i-1]) {
+                    thresholds[colorLevelCount][i] = thresholds[colorLevelCount][i-1] + 1;
+                }
+            }
+            
+            renderThresholdSliders();
+            renderHeatmap();
+        }
+
+        function setRangeCount(count) {
+            colorLevelCount = count;
+            document.getElementById('btn-range-3').className = count === 3 ? "px-3 py-1 text-[10px] font-bold rounded-md bg-white shadow-sm text-blue-600 transition-all" : "px-3 py-1 text-[10px] font-bold rounded-md text-slate-500 transition-all";
+            document.getElementById('btn-range-5').className = count === 5 ? "px-3 py-1 text-[10px] font-bold rounded-md bg-white shadow-sm text-blue-600 transition-all" : "px-3 py-1 text-[10px] font-bold rounded-md text-slate-500 transition-all";
+            renderThresholdSliders();
+            renderHeatmap();
+        }
+
+        // --- DATA PROCESSING ---
+        document.getElementById('excelInput').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            document.getElementById('loadingOverlay').classList.remove('hidden');
+            
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+                const bstr = evt.target.result;
+                const wb = XLSX.read(bstr, { type: 'binary' });
+                const ws = wb.Sheets[wb.SheetNames[0]];
+                const data = XLSX.utils.sheet_to_json(ws);
+                
+                processData(data);
+                
+                document.getElementById('loadingOverlay').classList.add('hidden');
+                const note = document.getElementById('importNote');
+                note.classList.remove('hidden');
+                setTimeout(() => note.classList.add('hidden'), 5000);
+            };
+            reader.readAsBinaryString(file);
+        });
+
+        function processData(data) {
+            rawData = data.map(item => {
+                let d = item.GATE_IN;
+                let dateStr = "Unknown";
+                if (typeof d === 'number') {
+                    const dobj = XLSX.SSF.parse_date_code(d);
+                    dateStr = `${dobj.y}-${String(dobj.m).padStart(2, '0')}-${String(dobj.d).padStart(2, '0')}`;
+                } else if (d) {
+                    dateStr = d.toString().split(' ')[0];
+                }
+                return {
+                    ...item,
+                    BLOCK: item.LOCATION ? item.LOCATION.split('-')[0] : '?',
+                    DATE_ONLY: dateStr
+                };
+            }).filter(item => {
+                if (item.BLOCK === '?' || item.DATE_ONLY === 'Unknown') return false;
+                const block = item.BLOCK;
+                if (/^[8]/.test(block) || /^QS/.test(block) || /^CG/.test(block) || /^E/.test(block)) return false;
+                return true;
+            });
+
+            const allDates = [...new Set(rawData.map(d => d.DATE_ONLY))].sort();
+            if (allDates.length > 0) {
+                const first = new Date(allDates[0]);
+                viewDate = new Date(first.getFullYear(), first.getMonth(), 1);
+            }
+            renderCalendar();
+            renderHeatmap();
+        }
+
+        // --- CALENDAR ---
+        function handleDateClick(dateStr) {
+            if (!rangeStart || (rangeStart && rangeEnd)) {
+                rangeStart = dateStr;
+                rangeEnd = null;
+            } else {
+                if (new Date(dateStr) < new Date(rangeStart)) {
+                    rangeEnd = rangeStart;
+                    rangeStart = dateStr;
+                } else {
+                    rangeEnd = dateStr;
+                }
+            }
+            updateSelection();
+            renderCalendar();
+            renderHeatmap();
+        }
+
+        function updateSelection() {
+            selectedDates = [];
+            if (rangeStart && rangeEnd) {
+                let current = new Date(rangeStart);
+                const last = new Date(rangeEnd);
+                while (current <= last) {
+                    selectedDates.push(current.toISOString().split('T')[0]);
+                    current.setDate(current.getDate() + 1);
+                }
+                const startLabel = new Date(rangeStart).toLocaleDateString('id-ID', {day:'2-digit', month:'short'});
+                const endLabel = new Date(rangeEnd).toLocaleDateString('id-ID', {day:'2-digit', month:'short'});
+                document.getElementById('rangeDisplay').textContent = `${startLabel} - ${endLabel}`;
+            } else if (rangeStart) {
+                selectedDates = [rangeStart];
+                document.getElementById('rangeDisplay').textContent = new Date(rangeStart).toLocaleDateString('id-ID', {day:'2-digit', month:'short'});
+            } else {
+                document.getElementById('rangeDisplay').textContent = "Pilih Tanggal";
+            }
+        }
+
+        function renderCalendar() {
+            const grid = document.getElementById('calendarGrid');
+            grid.innerHTML = '';
+            const month = viewDate.getMonth();
+            const year = viewDate.getFullYear();
+            document.getElementById('currentMonthYear').textContent = new Intl.DateTimeFormat('id-ID', { month: 'short', year: 'numeric' }).format(viewDate);
+            const firstDay = new Date(year, month, 1).getDay();
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            for (let i = 0; i < firstDay; i++) grid.appendChild(document.createElement('div')).className = "calendar-day disabled";
+            for (let i = 1; i <= daysInMonth; i++) {
+                const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+                const div = document.createElement('div');
+                const isStart = rangeStart === dateStr;
+                const isEnd = rangeEnd === dateStr;
+                const isInRange = rangeStart && rangeEnd && new Date(dateStr) > new Date(rangeStart) && new Date(dateStr) < new Date(rangeEnd);
+                div.className = `calendar-day has-data ${isStart || isEnd ? 'range-edge' : isInRange ? 'in-range' : ''}`;
+                div.textContent = i;
+                div.onclick = () => handleDateClick(dateStr);
+                grid.appendChild(div);
+            }
+        }
+
+        function changeMonth(delta) {
+            viewDate.setMonth(viewDate.getMonth() + delta);
+            renderCalendar();
+        }
+
+        // --- HEATMAP ---
+        function setFilter(type, value) {
+            currentDirection = value;
+            document.querySelectorAll('.dir-btn').forEach(btn => {
+                btn.className = "dir-btn flex-1 py-1.5 rounded-md text-[10px] font-bold transition-all text-slate-500 hover:text-slate-700";
+            });
+            document.getElementById(`btn-${value}`).className = "dir-btn flex-1 py-1.5 rounded-md text-[10px] font-bold transition-all bg-white shadow-sm text-blue-600";
+            renderHeatmap();
+        }
+
+        function getPalette() {
+            const schemes = {
+                'IMPORT': ['#f8fafc', '#dcfce7', '#86efac', '#22c55e', '#166534', '#064e3b'],
+                'EXPORT': ['#f8fafc', '#ffedd5', '#fdba74', '#f97316', '#c2410c', '#7c2d12'],
+                'ALL':    ['#f8fafc', '#e0f2fe', '#7dd3fc', '#0ea5e9', '#0369a1', '#0c4a6e']
+            };
+            const base = schemes[currentDirection];
+            if (colorLevelCount === 3) return [base[0], base[1], base[3], base[5]];
+            return base; 
+        }
+
+        function getColorForCount(count, palette) {
+            if (count === 0) return { bg: palette[0], text: '#cbd5e1' };
+            const currentT = thresholds[colorLevelCount];
+            
+            let level = 1;
+            for (let i = 0; i < currentT.length; i++) {
+                if (count > currentT[i]) level = i + 2;
+                else break;
+            }
+            
+            return {
+                bg: palette[level],
+                text: level > 2 ? '#ffffff' : '#1e293b'
+            };
+        }
+
+        function renderHeatmap() {
+            const palette = getPalette();
+            const header = document.getElementById('gridHeader');
+            const body = document.getElementById('gridBody');
+            const empty = document.getElementById('emptyState');
+            
+            if (selectedDates.length === 0) {
+                header.innerHTML = ''; body.innerHTML = '';
+                empty.classList.remove('hidden');
+                document.getElementById('stat-total').textContent = '0';
+                return;
+            }
+            empty.classList.add('hidden');
+
+            const allBlocks = [...new Set(rawData.map(d => d.BLOCK))].sort();
+            header.innerHTML = `
+                <tr>
+                    <th class="p-3 text-left text-[10px] font-bold text-slate-400 uppercase border-b border-slate-100 sticky-col top-0 bg-slate-50/50">Block</th>
+                    ${selectedDates.map(d => {
+                        const dateObj = new Date(d);
+                        const day = new Intl.DateTimeFormat('id-ID', { weekday: 'short' }).format(dateObj);
+                        const label = `${String(dateObj.getDate()).padStart(2, '0')}/${String(dateObj.getMonth()+1).padStart(2, '0')}`;
+                        return `<th class="p-3 text-center text-[10px] font-bold text-slate-600 border-b border-slate-100 min-w-[70px]">${day}<br>${label}</th>`;
+                    }).join('')}
+                </tr>
+            `;
+
+            let filtered = rawData.filter(d => selectedDates.includes(d.DATE_ONLY));
+            if (currentDirection !== 'ALL') filtered = filtered.filter(d => d.DIRECTION === currentDirection);
+            document.getElementById('stat-total').textContent = filtered.length;
+
+            const matrix = {};
+            filtered.forEach(d => {
+                if (!matrix[d.BLOCK]) matrix[d.BLOCK] = {};
+                matrix[d.BLOCK][d.DATE_ONLY] = (matrix[d.BLOCK][d.DATE_ONLY] || 0) + 1;
+            });
+
+            const labels = colorLevelCount === 3 ? ['LOW', 'MED', 'HIGH'] : ['V.LOW', 'LOW', 'MED', 'HIGH', 'V.HIGH'];
+            document.getElementById('legend').innerHTML = labels.map((l, i) => `
+                <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm" style="background:${palette[i+1]}"></span> ${l}</div>
+            `).join('');
+
+            body.innerHTML = '';
+            allBlocks.forEach(block => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td class="p-2 font-bold text-[10px] text-slate-500 border-b border-slate-100 sticky-col">${block}</td>`;
+                selectedDates.forEach(date => {
+                    const count = (matrix[block] && matrix[block][date]) || 0;
+                    const style = getColorForCount(count, palette);
+                    tr.innerHTML += `
+                        <td class="p-1 border-b border-slate-50">
+                            <div class="heatmap-cell" style="background-color: ${style.bg}; color: ${style.text}">
+                                ${count > 0 ? count : '-'}
+                            </div>
+                        </td>
+                    `;
+                });
+                body.appendChild(tr);
+            });
+        }
+    </script>
+</body>
+</html>

@@ -206,10 +206,13 @@
 
         <!-- Matrix Control Bar (Moved ALL/IMPORT/EXPORT here) -->
         <div class="flex flex-col md:flex-row gap-4 justify-between items-center mb-4 px-2">
-            <div class="flex bg-white/50 dark:bg-slate-800/50 p-1 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 w-full md:w-auto">
-                <button onclick="setFilter('direction', 'ALL')" id="btn-ALL" class="dir-btn flex-1 md:flex-none px-6 py-2 rounded-lg text-xs font-bold transition-all">ALL</button>
-                <button onclick="setFilter('direction', 'IMPORT')" id="btn-IMPORT" class="dir-btn flex-1 md:flex-none px-6 py-2 rounded-lg text-xs font-bold transition-all">IMPORT</button>
-                <button onclick="setFilter('direction', 'EXPORT')" id="btn-EXPORT" class="dir-btn flex-1 md:flex-none px-6 py-2 rounded-lg text-xs font-bold transition-all">EXPORT</button>
+            <div class="flex flex-col md:flex-row gap-2 w-full md:w-auto">
+                <div class="flex bg-white/50 dark:bg-slate-800/50 p-1 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 w-full md:w-auto">
+                    <button onclick="setFilter('direction', 'ALL')" id="btn-ALL" class="dir-btn flex-1 md:flex-none px-6 py-2 rounded-lg text-xs font-bold transition-all">ALL</button>
+                    <button onclick="setFilter('direction', 'IMPORT')" id="btn-IMPORT" class="dir-btn flex-1 md:flex-none px-6 py-2 rounded-lg text-xs font-bold transition-all">IMPORT</button>
+                    <button onclick="setFilter('direction', 'EXPORT')" id="btn-EXPORT" class="dir-btn flex-1 md:flex-none px-6 py-2 rounded-lg text-xs font-bold transition-all">EXPORT</button>
+                </div>
+                <button onclick="toggleHiddenBlocks()" id="btn-hidden-blocks" class="px-4 py-2 rounded-lg text-xs font-bold transition-all border border-slate-200 dark:border-slate-700 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700">Show Hidden Blocks</button>
             </div>
             
             <div id="legend" class="flex flex-wrap gap-4 items-center"></div>
@@ -263,11 +266,26 @@
         let viewDate = new Date(2025, 7, 1);
         let colorLevelCount = 3;
         let thresholds = { 3: [10, 25], 5: [5, 15, 30, 50] };
+        let showHiddenBlocks = false;
+
+        const blockVisibilityByDirection = {
+            IMPORT: new Set([
+                ...generateBlockRange('A', 5, 8),
+                ...generateBlockRange('B', 5, 8),
+                ...generateBlockRange('C', 5, 8),
+            ]),
+            EXPORT: new Set([
+                ...generateBlockRange('A', 1, 5),
+                ...generateBlockRange('B', 1, 5),
+                ...generateBlockRange('C', 3, 5),
+            ])
+        };
 
         window.onload = () => {
             renderThresholdSliders();
             renderCalendar();
             setFilter('direction', 'ALL'); // Initial active state
+            updateHiddenBlockButton();
         };
 
         function toggleCalendar() {
@@ -282,6 +300,41 @@
             const chevron = document.getElementById('threshChevron');
             const isShown = panel.classList.toggle('show');
             chevron.style.transform = isShown ? 'rotate(180deg)' : 'rotate(0deg)';
+        }
+
+        function generateBlockRange(prefix, start, end) {
+            const blocks = [];
+            for (let i = start; i <= end; i++) {
+                blocks.push(`${prefix}${String(i).padStart(2, '0')}`);
+            }
+            return blocks;
+        }
+
+        function normalizeBlockCode(block) {
+            const cleaned = String(block || '').trim().toUpperCase();
+            const match = cleaned.match(/^([A-Z])(\d{1,2})$/);
+            if (!match) return cleaned;
+            return `${match[1]}${String(parseInt(match[2], 10)).padStart(2, '0')}`;
+        }
+
+        function toggleHiddenBlocks() {
+            showHiddenBlocks = !showHiddenBlocks;
+            updateHiddenBlockButton();
+            renderHeatmap();
+        }
+
+        function updateHiddenBlockButton() {
+            const btn = document.getElementById('btn-hidden-blocks');
+            if (!btn) return;
+            if (showHiddenBlocks) {
+                btn.textContent = 'Hide Filtered Blocks';
+                btn.classList.add('bg-primary', 'text-white', 'shadow-lg', 'border-primary');
+                btn.classList.remove('text-slate-500', 'hover:bg-slate-100', 'dark:hover:bg-slate-700');
+            } else {
+                btn.textContent = 'Show Hidden Blocks';
+                btn.classList.remove('bg-primary', 'text-white', 'shadow-lg', 'border-primary');
+                btn.classList.add('text-slate-500', 'hover:bg-slate-100', 'dark:hover:bg-slate-700');
+            }
         }
 
         function renderThresholdSliders() {
@@ -450,6 +503,15 @@
             renderHeatmap();
         }
 
+
+        function formatHeaderDate(dateString) {
+            const date = new Date(dateString);
+            const dayName = date.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase();
+            const day = String(date.getDate()).padStart(2, '0');
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            return `${dayName} ${day}/${month}`;
+        }
+
         function renderHeatmap() {
             const table = document.getElementById('heatmapTable');
             const empty = document.getElementById('emptyState');
@@ -473,6 +535,11 @@
             });
 
             const allBlocks = [...new Set(rawData.map(d => d.BLOCK))].sort();
+            const visibleBlockSet = blockVisibilityByDirection[currentDirection];
+            const blocksToRender = allBlocks.filter(block => {
+                if (showHiddenBlocks || !visibleBlockSet) return true;
+                return visibleBlockSet.has(normalizeBlockCode(block));
+            });
             const labels = colorLevelCount === 3 ? ['LOW', 'MED', 'HIGH'] : ['V.LOW', 'LOW', 'MED', 'HIGH', 'V.HIGH'];
             
             document.getElementById('legend').innerHTML = labels.map((l, i) => `
@@ -484,11 +551,11 @@
             document.getElementById('gridHeader').innerHTML = `
                 <tr>
                     <th class="p-4 text-left text-[10px] font-bold text-slate-400 uppercase tracking-widest sticky-col bg-white dark:bg-slate-900 z-30">Block</th>
-                    ${selectedDates.map(d => `<th class="p-4 text-center text-[10px] font-bold text-slate-500">${new Date(d).getDate()}/${new Date(d).getMonth()+1}</th>`).join('')}
+                    ${selectedDates.map(d => `<th class="p-4 text-center text-[10px] font-bold text-slate-500">${formatHeaderDate(d)}</th>`).join('')}
                 </tr>
             `;
 
-            document.getElementById('gridBody').innerHTML = allBlocks.map(block => `
+            document.getElementById('gridBody').innerHTML = blocksToRender.map(block => `
                 <tr>
                     <td class="p-4 font-bold text-xs text-slate-600 dark:text-slate-300 sticky-col bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border-b border-slate-100 dark:border-slate-800">${block}</td>
                     ${selectedDates.map(date => {
